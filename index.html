@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0">
+		<title>Kittyquest</title>
+		<style>
+html, body, #canvas {
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+
+body {
+	color: white;
+	background-color: black;
+	overflow: hidden;
+	touch-action: none;
+}
+
+#canvas {
+	display: block;
+}
+
+#canvas:focus {
+	outline: none;
+}
+
+#status, #status-splash, #status-progress {
+	position: absolute;
+	left: 0;
+	right: 0;
+}
+
+#status, #status-splash {
+	top: 0;
+	bottom: 0;
+}
+
+#status {
+	background-color: #ede3d1;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	align-items: center;
+	visibility: hidden;
+}
+
+#status-splash {
+	max-height: 100%;
+	max-width: 100%;
+	margin: auto;
+}
+
+#status-splash.show-image--false {
+	display: none;
+}
+
+#status-splash.fullsize--true {
+	height: 100%;
+	width: 100%;
+	object-fit: contain;
+}
+
+#status-splash.use-filter--false {
+	image-rendering: pixelated;
+}
+
+#status-progress, #status-notice {
+	display: none;
+}
+
+#status-progress {
+	bottom: 10%;
+	width: 50%;
+	margin: 0 auto;
+}
+
+#status-notice {
+	background-color: #5b3943;
+	border-radius: 0.5rem;
+	border: 1px solid #9b3943;
+	color: #e0e0e0;
+	font-family: 'Noto Sans', 'Droid Sans', Arial, sans-serif;
+	line-height: 1.3;
+	margin: 0 2rem;
+	overflow: hidden;
+	padding: 1rem;
+	text-align: center;
+	z-index: 1;
+}
+		</style>
+		<link id="-gd-engine-icon" rel="icon" type="image/png" href="index.icon.png" />
+<link rel="apple-touch-icon" href="index.apple-touch-icon.png"/>
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<style>html,body{background:#1d1b2a;touch-action:none;overscroll-behavior:none;}
+html,body,canvas{-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;}</style>
+<script>
+/* Kittyflow iOS / Chrome-on-iOS audio unlock (ported from Zoodrop PR #36,
+   game/web/head/10_audio_unlock.html). Must load before the Godot engine script.
+   1) Wrap AudioContext / webkitAudioContext so we hold Godot's real contexts.
+   2) navigator.audioSession.type = "playback" (iOS 17+: sound with the ringer switch off).
+   3) In every gesture: resume() each context, then synchronously play a 1-sample silent buffer.
+   4) Also play() a silent looping <audio> (x-webkit-airplay=deny): older silent-switch workaround.
+   5) touchstart/touchend/pointerup/mouseup/click/keydown (capture, passive); re-unlock on visible.
+   Debug: window.__kfAudio = {contexts, running, states}; shown in ?debuglog. */
+(function () {
+  var ctxs = [];
+  ["AudioContext", "webkitAudioContext"].forEach(function (n) {
+    var C = window[n];
+    if (!C) return;
+    var W = function (o) {
+      var c = o === undefined ? new C() : new C(o);
+      ctxs.push(c);
+      try { c.addEventListener("statechange", status); } catch (e) {}
+      status();
+      return c;
+    };
+    W.prototype = C.prototype;
+    window[n] = W;
+  });
+  try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
+  var SILENT = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+  var tag = null;
+  function status() {
+    var st = ctxs.map(function (c) { return c.state; });
+    window.__kfAudio = { contexts: ctxs.length, running: ctxs.length > 0 && st.every(function (s) { return s === "running"; }), states: st };
+    return window.__kfAudio;
+  }
+  status();
+  function unlock(ev) {
+    ctxs.forEach(function (c) {
+      try {
+        if (c.state !== "running") { var p = c.resume(); if (p && p.then) p.then(status, function () {}); }
+        var b = c.createBuffer(1, 1, 22050), s = c.createBufferSource();
+        s.buffer = b; s.connect(c.destination); s.start(0);
+      } catch (e) {}
+    });
+    if (!tag) {
+      tag = document.createElement("audio");
+      tag.setAttribute("x-webkit-airplay", "deny");
+      tag.preload = "auto"; tag.loop = true; tag.src = SILENT;
+    }
+    try { var q = tag.play(); if (q && q.catch) q.catch(function () {}); } catch (e) {}
+    var s0 = status();
+    if (ev && ev.type && !unlock.logged && s0.running) {
+      unlock.logged = true;
+      try { if (window.__kfLog) window.__kfLog("audio", s0); } catch (e) {}
+    }
+  }
+  ["touchstart", "touchend", "pointerup", "mouseup", "click", "keydown"].forEach(function (ev) {
+    window.addEventListener(ev, unlock, { capture: true, passive: true });
+  });
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) unlock(); });
+})();
+</script>
+<script>
+/* Kittyflow iOS fixes (adapted from Zoodrop PR #36/#50).
+   1) Audio unlock: moved to 05_audio_unlock.html (loads first).
+   2) WebGL context loss: preventDefault and reload quietly; ResumeState restores the level.
+   3) Cap devicePixelRatio at 2 (iPhones report 3x: ~56% of the pixels at 2x).
+   4) window.__kfHeapMB(): WASM heap size for memory checks. */
+(function () {
+  var reloading = false;
+  function quietReload() {
+    if (reloading) return;
+    reloading = true;
+    try { if (window.__kfLog) window.__kfLog("reload", "webglcontextlost"); } catch (e) {}
+    setTimeout(function () { location.reload(); }, 300);
+  }
+  document.addEventListener("webglcontextlost", function (ev) { ev.preventDefault(); quietReload(); }, true);
+  var a = window.alert.bind(window);
+  window.alert = function (m) { if (String(m).indexOf("WebGL context lost") >= 0) { quietReload(); return; } a(m); };
+  try { if ((window.devicePixelRatio || 1) > 2) Object.defineProperty(window, "devicePixelRatio", { get: function () { return 2; } }); } catch (e) {}
+  var mem = null, inst = WebAssembly.instantiate, ins = WebAssembly.instantiateStreaming;
+  function grab(r) { try { var e = (r.instance || r).exports; for (var k in e) if (e[k] instanceof WebAssembly.Memory) mem = e[k]; } catch (x) {} return r; }
+  WebAssembly.instantiate = function () { return inst.apply(this, arguments).then(grab); };
+  if (ins) WebAssembly.instantiateStreaming = function () { return ins.apply(this, arguments).then(grab); };
+  window.__kfHeapMB = function () { return mem ? mem.buffer.byteLength / 1048576 : null; };
+})();
+</script>
+<script>
+/* Kittyflow debug log (adapted from Zoodrop PR #48). Ring buffer in localStorage,
+   written on every entry so it survives a kill: load, heartbeat every 2 s, memory
+   every 10 s, errors, pagehide / pageshow / visibility, WebGL loss, moves.
+   No clean pagehide before the next load = previous session crashed or was killed.
+   View it with ?debuglog (Copy / Share buttons). ?debuglog=0 turns logging off, =1 on. */
+(function () {
+  var q = new URLSearchParams(location.search);
+  try {
+    if (q.get("debuglog") === "0") localStorage.setItem("kf_debuglog_off", "1");
+    if (q.get("debuglog") === "1") localStorage.removeItem("kf_debuglog_off");
+    if (localStorage.getItem("kf_debuglog_off") === "1") return;
+  } catch (e) { return; }
+  var KEY = "kf_log", PREV = "kf_log_prev", MAX = 400, t0 = Date.now();
+  var log = { session: Math.random().toString(36).slice(2, 10), ua: navigator.userAgent.slice(0, 160), start: new Date(t0).toISOString(), entries: [], clean: false, hb: t0 };
+  var prev = null;
+  try { prev = JSON.parse(localStorage.getItem(KEY) || "null"); } catch (e) {}
+  if (prev && prev.session) {
+    prev.crash = !prev.clean;
+    prev.endedBy = prev.clean ? "pagehide" : "no pagehide (suspected crash / WebKit kill); last heartbeat " + new Date(prev.hb).toISOString();
+    try { localStorage.setItem(PREV, JSON.stringify(prev)); } catch (e) {}
+  } else {
+    try { prev = JSON.parse(localStorage.getItem(PREV) || "null"); } catch (e) {}
+  }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) { log.entries.splice(0, 50); } }
+  function add(k, d) {
+    var e = { t: Date.now() - t0, k: k };
+    if (d !== undefined) e.d = typeof d === "string" ? d.slice(0, 500) : d;
+    log.entries.push(e);
+    if (log.entries.length > MAX) log.entries.splice(0, log.entries.length - MAX);
+    save();
+  }
+  window.__kfLog = add;
+  window.__kfLogDump = function () { return JSON.stringify({ current: log, previous: prev }, null, 1); };
+  function mem() {
+    var m = { heapMB: window.__kfHeapMB ? window.__kfHeapMB() : null };
+    if (performance.memory) { m.jsUsedMB = Math.round(performance.memory.usedJSHeapSize / 1048576); }
+    return m;
+  }
+  var nav = (performance.getEntriesByType && performance.getEntriesByType("navigation")[0]) || {};
+  add("load", { nav: nav.type, dpr: window.devicePixelRatio, prevCrash: prev ? !!prev.crash : null, prevLastHb: prev ? prev.hb : null, url: location.search.slice(0, 120) });
+  window.addEventListener("pagehide", function (ev) { log.clean = true; add("pagehide", { persisted: ev.persisted }); });
+  window.addEventListener("pageshow", function (ev) { log.clean = false; add("pageshow", { persisted: ev.persisted }); });
+  document.addEventListener("visibilitychange", function () { add("vis", document.visibilityState); });
+  window.addEventListener("error", function (ev) { add("error", (ev.message || "") + " @" + (ev.filename || "").split("/").pop() + ":" + ev.lineno); });
+  window.addEventListener("unhandledrejection", function (ev) { add("rejection", String(ev.reason && (ev.reason.stack || ev.reason.message) || ev.reason)); });
+  ["error", "warn"].forEach(function (lv) {
+    var o = console[lv].bind(console);
+    console[lv] = function () { try { add(lv, Array.prototype.map.call(arguments, String).join(" ")); } catch (e) {} o.apply(console, arguments); };
+  });
+  document.addEventListener("webglcontextlost", function () { add("webglcontextlost"); }, true);
+  setInterval(function () { add("mem", mem()); }, 10000);
+  setInterval(function () { log.hb = Date.now(); save(); }, 2000);
+  if (q.has("debuglog") && q.get("debuglog") !== "0" && q.get("debuglog") !== "1") {
+    window.addEventListener("load", function () {
+      var txt = window.__kfLogDump();
+      var o = document.createElement("div");
+      o.id = "kflogbox";
+      o.style.cssText = "position:fixed;inset:4%;z-index:99;background:#fff;color:#222;border-radius:12px;padding:8px;display:flex;flex-direction:column;gap:6px;font:13px -apple-system,sans-serif";
+      var head = document.createElement("div");
+      var prevTxt = prev ? ("Previous session " + (prev.crash ? "ended WITHOUT a clean exit (likely killed): " : "ended cleanly: ") + (prev.endedBy || "")) : "No previous session logged.";
+      function audioTxt() { var au = window.__kfAudio || {}; return "Audio: contexts=" + (au.contexts || 0) + " running=" + !!au.running + " (" + (au.states || []).join(",") + ")"; }
+      head.textContent = audioTxt() + " | " + prevTxt;
+      setInterval(function () { head.textContent = audioTxt() + " | " + prevTxt; }, 1000);
+      var ta = document.createElement("textarea");
+      ta.value = txt; ta.readOnly = true;
+      ta.style.cssText = "flex:1;font:11px monospace;-webkit-user-select:text;user-select:text";
+      var row = document.createElement("div"); row.style.cssText = "display:flex;gap:8px";
+      function btn(t, f) { var b = document.createElement("button"); b.textContent = t; b.style.cssText = "flex:1;padding:10px;font-size:15px"; b.onclick = f; row.appendChild(b); }
+      btn("Copy", function () { ta.focus(); ta.select(); try { navigator.clipboard.writeText(window.__kfLogDump()); } catch (e) { document.execCommand("copy"); } });
+      btn("Share", function () { if (navigator.share) navigator.share({ title: "Kittyflow debug log", text: window.__kfLogDump() }).catch(function () {}); });
+      btn("Close", function () { o.remove(); });
+      o.appendChild(head); o.appendChild(ta); o.appendChild(row);
+      document.body.appendChild(o);
+    });
+  }
+})();
+</script>
+
+	</head>
+	<body>
+		<canvas id="canvas">
+			Your browser does not support the canvas tag.
+		</canvas>
+
+		<noscript>
+			Your browser does not support JavaScript.
+		</noscript>
+
+		<div id="status">
+			<img id="status-splash" class="show-image--false fullsize--true use-filter--true" src="index.png" alt="">
+			<progress id="status-progress"></progress>
+			<div id="status-notice"></div>
+		</div>
+
+		<script src="index.js"></script>
+		<script>
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":6448704,"index.wasm":43699190},"focusCanvas":true,"gdextensionLibs":[]};
+const GODOT_THREADS_ENABLED = false;
+const engine = new Engine(GODOT_CONFIG);
+
+(function () {
+	const statusOverlay = document.getElementById('status');
+	const statusProgress = document.getElementById('status-progress');
+	const statusNotice = document.getElementById('status-notice');
+
+	let initializing = true;
+	let statusMode = '';
+
+	function setStatusMode(mode) {
+		if (statusMode === mode || !initializing) {
+			return;
+		}
+		if (mode === 'hidden') {
+			statusOverlay.remove();
+			initializing = false;
+			return;
+		}
+		statusOverlay.style.visibility = 'visible';
+		statusProgress.style.display = mode === 'progress' ? 'block' : 'none';
+		statusNotice.style.display = mode === 'notice' ? 'block' : 'none';
+		statusMode = mode;
+	}
+
+	function setStatusNotice(text) {
+		while (statusNotice.lastChild) {
+			statusNotice.removeChild(statusNotice.lastChild);
+		}
+		const lines = text.split('\n');
+		lines.forEach((line) => {
+			statusNotice.appendChild(document.createTextNode(line));
+			statusNotice.appendChild(document.createElement('br'));
+		});
+	}
+
+	function displayFailureNotice(err) {
+		console.error(err);
+		if (err instanceof Error) {
+			setStatusNotice(err.message);
+		} else if (typeof err === 'string') {
+			setStatusNotice(err);
+		} else {
+			setStatusNotice('An unknown error occurred.');
+		}
+		setStatusMode('notice');
+		initializing = false;
+	}
+
+	const missing = Engine.getMissingFeatures({
+		threads: GODOT_THREADS_ENABLED,
+	});
+
+	if (missing.length !== 0) {
+		if (GODOT_CONFIG['serviceWorker'] && GODOT_CONFIG['ensureCrossOriginIsolationHeaders'] && 'serviceWorker' in navigator) {
+			let serviceWorkerRegistrationPromise;
+			try {
+				serviceWorkerRegistrationPromise = navigator.serviceWorker.getRegistration();
+			} catch (err) {
+				serviceWorkerRegistrationPromise = Promise.reject(new Error('Service worker registration failed.'));
+			}
+			// There's a chance that installing the service worker would fix the issue
+			Promise.race([
+				serviceWorkerRegistrationPromise.then((registration) => {
+					if (registration != null) {
+						return Promise.reject(new Error('Service worker already exists.'));
+					}
+					return registration;
+				}).then(() => engine.installServiceWorker()),
+				// For some reason, `getRegistration()` can stall
+				new Promise((resolve) => {
+					setTimeout(() => resolve(), 2000);
+				}),
+			]).then(() => {
+				// Reload if there was no error.
+				window.location.reload();
+			}).catch((err) => {
+				console.error('Error while registering service worker:', err);
+			});
+		} else {
+			// Display the message as usual
+			const missingMsg = 'Error\nThe following features required to run Godot projects on the Web are missing:\n';
+			displayFailureNotice(missingMsg + missing.join('\n'));
+		}
+	} else {
+		setStatusMode('progress');
+		engine.startGame({
+			'onProgress': function (current, total) {
+				if (current > 0 && total > 0) {
+					statusProgress.value = current;
+					statusProgress.max = total;
+				} else {
+					statusProgress.removeAttribute('value');
+					statusProgress.removeAttribute('max');
+				}
+			},
+		}).then(() => {
+			setStatusMode('hidden');
+		}, displayFailureNotice);
+	}
+}());
+		</script>
+	</body>
+</html>
+
